@@ -1,4 +1,3 @@
-
 ################## STEP 1 : Intialisation, data ingestion and first model ######################
 
 # Clean the R environment.
@@ -206,102 +205,124 @@ errlist %>% resreport2(Y, Yhat_ranger)
 # Create new error functions.
 # Maximum error is the maximum difference between the point estimate and the actual parameter, which
 # is 1/2 the width of the confidence interval for means and proportions.
-maxerror <- function(Y,Yhat) max(abs(Y-Yhat))
-corerror <- function(Y,Yhat) cor(Y,Yhat)
-errlist2 <- c(errlist,"maxerror","corerror")
+maxerror <- function(Y, Yhat) max(abs(Y - Yhat))
+corerror <- function(Y, Yhat) cor(Y, Yhat)
+# Include maxerror and corerror in the list of error funcition.
+errlist2 <- c(errlist, "maxerror", "corerror")
 
-#run the report with new error functions
-errlist2 %>% resreport2(Y,Yhat_ranger)
-errlist2 %>% resreport2(Y,Yhat)
-
-
-
-#how fast were they ?
-# build a Random Forest model of the data
-system.time(RF1 <- randomForest(as.data.frame(X1),as.factor(Y),do.trace=50,importance=T))
-
-#build a ranger random forest
-system.time(ran1 <- ranger(Y ~ ., data=X1Y,importance="permutation"))
-
-varImpPlot(RF1)  # show variable importances in RF model
-ran1$variable.importance %>% sort %>% barplot(horiz=T,cex.names=0.5) # show variable importance of ranger model : permutation
-
-X1Yhat <- cbind(X1,Yhat_ranger)
-
-#what if we just used the 4 most significant variables ?
-X1reduced <- transmute(X1,Sex,Pclass,Fare,Age)
-
-RF1reduced <- randomForest(X1reduced,as.factor(Y),do.trace=50,importance=T,ntree=200)
-errlist2 %>% resreport2(Y,RF1reduced$votes[,2])  #report the AUC - Area Under (the ROC) Curve
+# Run the report with new error functions.
+errlist2 %>% resreport2(Y, Yhat_ranger)
+errlist2 %>% resreport2(Y, Yhat)
 
 
-varImpPlot(RF1reduced)  # show variable importances in RF model
+# How fast were the models?
 
-# now try a (generalised, regularised) linear model with glmnet
-#need to convert categorics to elementary for linear model
+# Build a Random Forest model of the data.
+system.time(RF1 <- randomForest(as.data.frame(X1), as.factor(Y), do.trace = 50, importance = TRUE))
 
+# Build a Ranger Random Forest of the data.
+system.time(ran1 <- ranger(Y ~ ., data = X1Y, importance = "permutation"))
 
+# Show variable importances in RF model.
+# Mean Decrease in Accuracy is the decrease in model accuracy from permuting the values in each
+# feature.
+# The Gini coefficient measures the inequality among values of a frequency distribution.
+varImpPlot(RF1)
+# Show variable importance of ranger model: permutation.
+ran1$variable.importance %>% sort %>% barplot(horiz = TRUE, cex.names = 0.5)
+
+X1Yhat <- cbind(X1, Yhat_ranger)
+
+# What if we just used the 4 most significant variables ?
+X1reduced <- transmute(X1, Sex, Pclass, Fare, Age)
+
+RF1reduced <- randomForest(X1reduced, as.factor(Y), do.trace = 50, importance = TRUE, ntree = 200)
+# Report the AUC - Area Under the (ROC) Curve
+errlist2 %>% resreport2(Y, RF1reduced$votes[, 2])
+
+# Show variable importances in Random Forest model
+varImpPlot(RF1reduced)
+
+# Try a (generalised, regularised) linear model with glmnet function.
+
+# Convert categorics to elementary for linear model.
 X1dummy <- model.matrix( ~ ., X1)[,-1]
 
-#build a binomial generalised linear model using lasso and ridge regression regularisation
-#and n-fold cross-validation
-cvg1 <- cv.glmnet(X1dummy,as.factor(Y),family="binomial",type.measure="auc",nfolds = 10,keep=T)
-#what if we vary alpha ?
-cvg0.5 <- cv.glmnet(X1dummy,as.factor(Y),family="binomial",type.measure="auc",nfolds = 10,alpha=0.5,keep=T)
+# Build a binomial generalised linear model using lasso and ridge regression regularisation
+# and n-fold cross-validation.
+cvg1 <- cv.glmnet(X1dummy, as.factor(Y), family = "binomial", type.measure = "auc", nfolds = 10,
+                  keep = TRUE)
 
-#indices of the best glmnet model
+# Test binomial generalised linear model using alpha 0.5.
+cvg0.5 <- cv.glmnet(X1dummy, as.factor(Y), family = "binomial", type.measure = "auc", nfolds = 10,
+                    alpha = 0.5, keep = TRUE)
+
+# Get the indices of the best glmnet model.
 optind <- which(cvg1$lambda == cvg1$lambda.min)
 se1ind <- which(cvg1$lambda == cvg1$lambda.1se)
-#best predictions
+# Best predictions
 
-#plot the model
+# Plot the model.
 plot(cvg1)
 
-# what is the AUC of the best model ?
+# Get the AUC of the best model.
 max(cvg1$cvm)
 
 
 
-# what are the parameters of the best model, and the 1se model ?
-cvg1$glmnet.fit$beta[,which(cvg1$lambda==cvg1$lambda.min)]
-cvg1$glmnet.fit$beta[,which(cvg1$lambda==cvg1$lambda.1se)]
+# What are the parameters of the best model, and the 1se model?
+# The lambda.min option refers to value of λ at the lowest CV error. The error at this value of λ 
+# is the average of the errors over the k folds and hence this estimate of the error is uncertain.
+cvg1$glmnet.fit$beta[, which(cvg1$lambda == cvg1$lambda.min)]
+# The lambda.1se represents the value of λ in the search that was simpler than the best model 
+# (lambda.min), but which has error within 1 standard error of the best model.
+cvg1$glmnet.fit$beta[, which(cvg1$lambda == cvg1$lambda.1se)]
 
-fullreport <- function(error_list,Ylist,Yhatlist,NameList) {
-  resmat <- list(Ylist,Yhatlist) %>% pmap(resreport2,errlist=error_list) %>% reduce(rbind) 
+fullreport <- function(error_list, Ylist, Yhatlist, NameList) {
+  resmat <- list(Ylist, Yhatlist) %>% pmap(resreport2, errlist = error_list) %>% reduce(rbind) 
   row.names(resmat) <- NameList
   resmat
 }
 
-Ylist <- list(Y,Y,Y,Y,Y)
-Yhat_list <- list(Yhat,Yhat_ranger,RF1reduced$votes[,2],cvg1$fit.preval[,optind],cvg1$fit.preval[,se1ind])
-NameList <- str_c("X1 - median imputation: ",c("randomForest","ranger","randomForest - top4 fields","Lasso AUC-optimal Model","Lasso AUC-opitmal 1SE simplified")) %>% 
+Ylist <- list(Y, Y, Y, Y, Y)
+Yhat_list <- list(Yhat, Yhat_ranger, RF1reduced$votes[, 2], cvg1$fit.preval[, optind],
+                  cvg1$fit.preval[, se1ind])
+NameList <- str_c("X1 - median imputation: ", c("randomForest", "ranger", "randomForest - top4 fields",
+                                                "Lasso AUC-optimal Model", 
+                                                "Lasso AUC-opitmal 1SE simplified")) %>% 
            as.list
 
-errlist %>% fullreport(Ylist,Yhat_list,NameList)  
+errlist %>% fullreport(Ylist, Yhat_list, NameList)  
 
 
-#grid search
+# Grid search looks for the best combination of alpha and lambda to the Linear Model.
 
 nsample = 40
-alpha <- seq(0,1,length=11)
-maxauc <- matrix(0,ncol=length(alpha),nrow=nsample)
+# Try alpha 0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0.
+alpha <- seq(0, 1, length = 11)
+# maxauc stores the maximum AUC to each sample vs each alpha.
+maxauc <- matrix(0, ncol = length(alpha), nrow = nsample)
 colnames(maxauc) <- alpha
 for(j in 1:nsample) {
-for(i in  seq_along(alpha))
-  {  
-    cvg1 <- cv.glmnet(X1dummy,as.factor(Y),family="binomial",type.measure="auc",nfolds = 10,alpha=alpha[i])
-    maxauc[j,i] <- max(cvg1$cvm)
-  }
-  maxauc_gathered <- gather(maxauc %>% as.data.frame,key = alpha,value= auc) %>% filter(auc!=0)
-  z <- ggplot(maxauc_gathered, aes(y=auc, x=as.factor(alpha))) + 
-    geom_boxplot(aes(fill=as.factor(alpha)), stat="boxplot", position="dodge", alpha=0.5, width=0.2) + 
-    geom_violin(aes(fill=as.factor(alpha)), stat="ydensity", position="dodge", alpha=0.5, trim=TRUE, scale="area") + 
-    #coord_flip() + theme_grey() + 
-    theme(text=element_text(family="sans", face="plain", color="#000000", size=15, hjust=0.5, vjust=0.5)) + 
-    guides(fill=guide_legend(title="alpha")) + xlab("as.factor(alpha)") + ylab("auc") 
-  print(z)
-  
-  print(j)
+     for(i in  seq_along(alpha))
+     {  
+          cvg1 <- cv.glmnet(X1dummy, as.factor(Y), family = "binomial", type.measure = "auc",
+                            nfolds = 10, alpha = alpha[i])
+          maxauc[j, i] <- max(cvg1$cvm)
+     }
+     maxauc_gathered <- gather(maxauc %>% as.data.frame, key = alpha, value = auc) %>% filter(auc != 0)
+     z <- ggplot(maxauc_gathered, aes(y = auc, x = as.factor(alpha))) + 
+          geom_boxplot(aes(fill = as.factor(alpha)), stat = "boxplot", position = "dodge",
+                       alpha = 0.5, width = 0.2) + 
+          geom_violin(aes(fill = as.factor(alpha)), stat = "ydensity", position = "dodge",
+                      alpha = 0.5, trim = TRUE, scale = "area") + 
+          #coord_flip() + theme_grey() + 
+          theme(text=element_text(family = "sans", face = "plain", color = "#000000", size = 15,
+                                  hjust = 0.5, vjust = 0.5)) + 
+          guides(fill = guide_legend(title = "alpha")) + xlab("as.factor(alpha)") + ylab("auc") 
+     print(z)
+     
+     print(j)
 }  
 
 
